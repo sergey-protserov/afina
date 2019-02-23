@@ -114,6 +114,9 @@ bool SimpleLRU::RefreshImp(lru_node &torefresh_ref) {
 
 // Remove LRU-nodes until we get as much as needfree free space
 bool SimpleLRU::GetFreeImpl(size_t needfree) {
+    if (needfree > _max_size) {
+        return false;
+    }
     while (_max_size - _cur_size < needfree) {
         DeleteRefImpl(*_lru_head);
     }
@@ -123,7 +126,9 @@ bool SimpleLRU::GetFreeImpl(size_t needfree) {
 // Put a new element w/o checking for it's existence (this check MUST be performed before calling this method)
 bool SimpleLRU::PutImpl(const std::string &key, const std::string &value) {
     size_t addsize = key.size() + value.size();
-    GetFreeImpl(addsize);
+    if (!GetFreeImpl(addsize)) {
+        return false;
+    }
     // TOASK: что будет с остальными полями структуры, которые я не указываю в списке инициализации?
     // см. вопрос в SimpleLRU.h: там в указателе был мусор, если не инициализировать его явно
     std::unique_ptr<lru_node> toput{new lru_node{key, value}};
@@ -150,7 +155,9 @@ bool SimpleLRU::SetImpl(std::map<std::reference_wrapper<const std::string>, std:
     // if (_cur_size + sizedelta > _max_size) {
     //     return false;
     // }
-    GetFreeImpl(sizedelta);
+    if (!GetFreeImpl(sizedelta)) {
+        return false;
+    }
     toset_node.value = value;
     _cur_size += sizedelta;
     return RefreshImp(toset_node);

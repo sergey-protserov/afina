@@ -3,6 +3,7 @@ generated/*
 
 # local cmake builds
 /build
+/build_nosan
 /cmake-build-debug
 
 # local config use to test changes

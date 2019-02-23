@@ -24,13 +24,15 @@ public:
 
     ~SimpleLRU() {
         _lru_index.clear();
-        while (_lru_head->next != nullptr) {
-            std::unique_ptr<lru_node> tmp(nullptr);
-            tmp.swap(_lru_head->next);
-            _lru_head.swap(tmp);
-            tmp.reset();
+        if (_lru_head != nullptr) {
+            while (_lru_head->next != nullptr) {
+                std::unique_ptr<lru_node> tmp(nullptr);
+                tmp.swap(_lru_head->next);
+                _lru_head.swap(tmp);
+                tmp.reset();
+            }
+            _lru_head.reset(); // TODO: here was stack overflow. Should I file pull request?
         }
-        _lru_head.reset(); // TODO: here was stack overflow. Should I file pull request?
     }
 
     // Implements Afina::Storage interface

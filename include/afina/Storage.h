@@ -83,7 +83,9 @@ public:
      * @param key to retrive1 value for
      * @param value output parameter to copy value to
      */
-    virtual bool Get(const std::string &key, std::string &value) const = 0;
+    // Get is no longer const, since according to LRU logic, element's position
+    // should be updated on each Get
+    virtual bool Get(const std::string &key, std::string &value) = 0;
 };
 
 } // namespace Afina

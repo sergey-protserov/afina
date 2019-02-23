@@ -45,7 +45,8 @@ public:
     }
 
     // see SimpleLRU.h
-    bool Get(const std::string &key, std::string &value) const override {
+    // Get is no longer const, since according to LRU logic, it should update element's position
+    bool Get(const std::string &key, std::string &value) override {
         // TODO: sinchronization
         return SimpleLRU::Get(key, value);
     }

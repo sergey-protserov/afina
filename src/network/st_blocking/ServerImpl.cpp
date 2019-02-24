@@ -27,6 +27,8 @@ namespace Afina {
 namespace Network {
 namespace STblocking {
 
+// TOASK: следует ли явно писать в конструкторе производного класса вызов
+// конструктора родительского класса, или он вызовется сам автоматически?
 // See Server.h
 ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl, bool local)
     : Server(ps, pl, local) {}

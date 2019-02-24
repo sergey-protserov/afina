@@ -1,6 +1,12 @@
 #ifndef AFINA_STORAGE_THREAD_SAFE_SIMPLE_LRU_H
 #define AFINA_STORAGE_THREAD_SAFE_SIMPLE_LRU_H
 
+/* TOASK: не понял смысл замечания из Wiki:
+внимание: т.к все вызываемые методы интерфейса storage виртуальный, то "делегирование"
+может быть сделано через наследование, как написано в коде afina, однако вы можете и
+переписать этот код, сохранив ссылку на SimpleLRU явно
+*/
+
 #include <map>
 #include <mutex>
 #include <string>

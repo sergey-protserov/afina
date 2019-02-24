@@ -2,8 +2,8 @@
 #define AFINA_NETWORK_MT_BLOCKING_SERVER_H
 
 #include <atomic>
-#include <thread>
 #include <mutex>
+#include <thread>
 #include <vector>
 
 #include <afina/network/Server.h>
@@ -60,7 +60,7 @@ private:
 
     // Workers
     struct Worker {
-        Worker(): thr{}, busy{false} {};
+        Worker() : thr{}, busy{false} {};
         std::thread thr;
         bool busy;
     };

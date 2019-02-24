@@ -3,6 +3,8 @@
 
 #include <atomic>
 #include <thread>
+#include <mutex>
+#include <vector>
 
 #include <afina/network/Server.h>
 
@@ -52,6 +54,25 @@ private:
 
     // Thread to run network on
     std::thread _thread;
+
+    // Maximum amount of workers
+    uint32_t _n_workers;
+
+    // Workers
+    struct Worker {
+        Worker(): thr{}, busy{false} {};
+        std::thread thr;
+        bool busy;
+    };
+    std::mutex _workers_m;
+    std::vector<Worker> _workers;
+
+    // If free worker exists, atomically marks him as busy and returns his number
+    // Returns -1 if all the workers are busy
+    int64_t FindFreeWorker();
+
+    // Function for worker
+    void Work(uint32_t number, int client_socket);
 };
 
 } // namespace MTblocking

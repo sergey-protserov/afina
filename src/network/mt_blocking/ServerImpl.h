@@ -7,6 +7,7 @@
 #include <vector>
 
 #include <afina/network/Server.h>
+#include <afina/concurrency/Executor.h>
 
 namespace spdlog {
 class logger;
@@ -58,21 +59,11 @@ private:
     // Maximum amount of workers
     uint32_t _n_workers;
 
-    // Workers
-    struct Worker {
-        Worker() : thr{}, busy{false} {};
-        std::thread thr;
-        bool busy;
-    };
-    std::mutex _workers_m;
-    std::vector<Worker> _workers;
-
-    // If free worker exists, atomically marks him as busy and returns his number
-    // Returns -1 if all the workers are busy
-    int64_t FindFreeWorker();
+    // Thread pool of workers
+    Afina::Concurrency::Executor *_executor;
 
     // Function for worker
-    void Work(uint32_t number, int client_socket);
+    void Work(int client_socket);
 };
 
 } // namespace MTblocking

@@ -1,13 +1,5 @@
 #include "ServerImpl.h"
 
-// TODO: переписать с использованием condvar'ов
-
-// TODO: записал на ходу, мог ошибиться: "сделать так,
-// чтобы поток, обслуживающий accept, ждал в конце своей работы закрытия всех клиентских
-// соединений (например, latch)"
-// Если не ошибся, то не понимаю, зачем это. У меня acceptor может завершиться, а worker'ы продолжат дообрабатывать
-// текущие команды. И acceptor'а и worker'ов будет ждать основной поток через Join()
-
 #include <cassert>
 #include <cstring>
 #include <iostream>
@@ -39,7 +31,7 @@ namespace MTblocking {
 // конструктора родительского класса, или он вызовется сам автоматически?
 // See Server.h
 ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl, bool local)
-    : Server(ps, pl, local), _n_workers(1) {}
+    : Server(ps, pl, local), _n_workers(1), _executor(nullptr) {}
 
 // See Server.h
 ServerImpl::~ServerImpl() {}
@@ -89,7 +81,7 @@ void ServerImpl::Start(uint16_t port, uint32_t n_accept, uint32_t n_workers) {
     }
 
     running.store(true);
-    _workers = std::vector<Worker>(_n_workers);
+    _executor = new Afina::Concurrency::Executor("workers", _n_workers, _n_workers, 20, std::chrono::milliseconds(1000));
     _thread = std::thread(&ServerImpl::OnRun, this);
 }
 
@@ -103,17 +95,13 @@ void ServerImpl::Stop() {
 void ServerImpl::Join() {
     assert(_thread.joinable());
     _thread.join();
-    for (uint32_t i = 0; i < _n_workers; ++i) {
-        if (_workers[i].thr.joinable()) {
-            _workers[i].thr.join();
-        }
-    }
+    _executor->Stop(true);
+    delete _executor;
     close(_server_socket);
 }
 
 // See Server.h
 void ServerImpl::OnRun() {
-    int64_t candidate_worker;
     while (running.load()) {
         _logger->debug("waiting for connection...");
 
@@ -146,40 +134,19 @@ void ServerImpl::OnRun() {
             setsockopt(client_socket, SOL_SOCKET, SO_RCVTIMEO, (const char *)&tv, sizeof tv);
         }
 
-        candidate_worker = FindFreeWorker();
-        if (candidate_worker == -1) {
+        if (!(_executor->Execute(&ServerImpl::Work, this, client_socket))) {
             close(client_socket);
             _logger->debug("No free workers to process this connection");
             continue;
         }
-        _logger->debug("Worker {} assigned to this task", candidate_worker);
-        _workers_m.lock();
-        if (_workers[candidate_worker].thr.joinable()) {
-            _workers[candidate_worker].thr.join();
-        }
-        _workers[candidate_worker].thr = std::thread(&ServerImpl::Work, this, candidate_worker, client_socket);
-        _workers_m.unlock();
     }
 
     // Cleanup on exit...
     _logger->warn("Network stopped");
 }
 
-// If free worker exists, atomically marks him as busy and returns his number
-// Returns -1 if all the workers are busy
-int64_t ServerImpl::FindFreeWorker() {
-    std::lock_guard<std::mutex> lg{_workers_m};
-    for (uint32_t i = 0; i < _n_workers; ++i) {
-        if (_workers[i].busy == false) {
-            _workers[i].busy = true;
-            return i;
-        }
-    }
-    return -1;
-}
-
 // Function for worker
-void ServerImpl::Work(uint32_t number, int client_socket) {
+void ServerImpl::Work(int client_socket) {
     // Here is connection state
     // - parser: parse state of the stream
     // - command_to_execute: last command parsed out of stream
@@ -201,7 +168,7 @@ void ServerImpl::Work(uint32_t number, int client_socket) {
         // в моём варианте mt_block при завершении работы сервера корректно
         // довыполняется текущая команда, после чего соединение клиента
         // закрываем
-        while ((readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
+        while (running && (readed_bytes = read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
             _logger->debug("Got {} bytes from socket", readed_bytes);
 
             // Single block of data readed from the socket could trigger inside actions a multiple times,
@@ -257,15 +224,6 @@ void ServerImpl::Work(uint32_t number, int client_socket) {
                         throw std::runtime_error("Failed to send response");
                     }
 
-                    // Has server itself stopped?
-                    if (running == false) {
-                        close(client_socket);
-                        _workers_m.lock();
-                        _workers[number].busy = false;
-                        _workers_m.unlock();
-                        return;
-                    }
-
                     // Prepare for the next command
                     command_to_execute.reset();
                     argument_for_command.resize(0);
@@ -281,12 +239,10 @@ void ServerImpl::Work(uint32_t number, int client_socket) {
     } catch (std::runtime_error &ex) {
         _logger->error("Failed to process connection on descriptor {}: {}", client_socket, ex.what());
     }
+    // TODO: корректное закрытие сокета в любой ситуации
 
     // We are done with this connection
     close(client_socket);
-    _workers_m.lock();
-    _workers[number].busy = false;
-    _workers_m.unlock();
 }
 
 } // namespace MTblocking

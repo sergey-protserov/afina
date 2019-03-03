@@ -16,6 +16,13 @@ namespace Concurrency {
  * # Thread pool
  */
 class Executor {
+public:
+    Executor(const std::string &name, int low_watermark, int high_watermark, int max_queue_size,
+             std::chrono::milliseconds idle_time);
+
+    ~Executor() { this->Stop(false); };
+
+private:
     enum class State {
         // Threadpool is fully operational, tasks could be added and get executed
         kRun,
@@ -28,9 +35,7 @@ class Executor {
         kStopped
     };
 
-    Executor(std::string name, int size);
-    ~Executor();
-
+public:
     /**
      * Signal thread pool to stop, it will stop accepting new jobs and close threads just after each become
      * free. All enqueued jobs will be complete.
@@ -46,21 +51,10 @@ class Executor {
      * That function doesn't wait for function result. Function could always be written in a way to notify caller about
      * execution finished by itself
      */
-    template <typename F, typename... Types> bool Execute(F &&func, Types... args) {
-        // Prepare "task"
-        auto exec = std::bind(std::forward<F>(func), std::forward<Types>(args)...);
+    template <typename F, typename... Types> bool Execute(F &&func, Types &&... args);
 
-        std::unique_lock<std::mutex> lock(this->mutex);
-        if (state != State::kRun) {
-            return false;
-        }
-
-        // Enqueue new task
-        tasks.push_back(exec);
-        empty_condition.notify_one();
-        return true;
-    }
-
+    // TOASK: как правильно удалять конструкторы/operator=?
+    // переносить в private или =delete?
 private:
     // No copy/move/assign allowed
     Executor(const Executor &);            // = delete;
@@ -73,31 +67,72 @@ private:
      */
     friend void perform(Executor *executor);
 
+private:
     /**
      * Mutex to protect state below from concurrent modification
      */
-    std::mutex mutex;
+    std::mutex _mutex;
 
     /**
      * Conditional variable to await new data in case of empty queue
      */
-    std::condition_variable empty_condition;
+    std::condition_variable _empty_condition;
 
     /**
-     * Vector of actual threads that perorm execution
+     * Conditional variable to await for server stop
      */
-    std::vector<std::thread> threads;
+    std::condition_variable _stop_condition;
 
     /**
      * Task queue
      */
-    std::deque<std::function<void()>> tasks;
+    std::deque<std::function<void()>> _tasks;
 
     /**
      * Flag to stop bg threads
      */
-    State state;
+    State _state;
+
+    /**
+     * Name of this threadpool
+     */
+    std::string _name;
+
+    /**
+     * Minimal amount of threads to be present
+     */
+    int _low_watermark;
+
+    /**
+     * Maximum amount of threads to be present
+     */
+    int _high_watermark;
+
+    /**
+     * Maximum amount of tasks in the queue
+     */
+    int _max_queue_size;
+
+    /**
+     * If there are more than _low_watermark
+     * threads, they wait for a new task
+     * for _idle_time milliseconds before
+     * disappearing
+     */
+    std::chrono::milliseconds _idle_time;
+
+    /**
+     * Current amount of active workers
+     */
+    int _cur_workers;
+
+    /**
+     * Current amount of free workers
+     */
+    int _free_workers;
 };
+
+void perform(Executor *executor);
 
 } // namespace Concurrency
 } // namespace Afina

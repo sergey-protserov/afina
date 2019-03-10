@@ -57,30 +57,6 @@ void perform(Executor *executor) {
     }
 }
 
-template <typename F, typename... Types> bool Executor::Execute(F &&func, Types &&... args) {
-    // Prepare "task"
-    auto exec = std::bind(std::forward<F>(func), std::forward<Types>(args)...);
-
-    std::unique_lock<std::mutex> lock(_mutex);
-    if ((_state != State::kRun) || (_tasks.size() >= _max_queue_size)) {
-        return false;
-    }
-
-    // Enqueue new task
-    _tasks.push_back(std::move(exec));
-    if ((_free_workers == 0) && (_cur_workers < _high_watermark)) {
-        std::thread tmp(perform, this);
-        tmp.detach();
-        _cur_workers += 1;
-        _free_workers += 1;
-    }
-    // TOASK: нормально ли отпускать его до notify? По идее, так быстрее, ведь на том конце
-    // не придётся виснуть на мьютексе, сработает концепция futex
-    lock.unlock();
-    _empty_condition.notify_one();
-    return true;
-}
-
 void Executor::Stop(bool await) {
     if (_state == Executor::State::kStopped) {
         return;

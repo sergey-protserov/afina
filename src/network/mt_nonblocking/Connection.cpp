@@ -43,17 +43,19 @@ void Connection::DoRead() {
     std::lock_guard<std::mutex> lg{_m_state};
     try {
         int bytes_read_now = -1;
-        while ((bytes_read_now = read(_socket, client_buffer + readed_bytes, sizeof(client_buffer) - readed_bytes)) > 0) {
+        while ((bytes_read_now = read(_socket, client_buffer + readed_bytes, sizeof(client_buffer) - readed_bytes)) >
+               0) {
             readed_bytes += bytes_read_now;
-//             _logger->debug("Got {} bytes from socket", readed_bytes);
+            //             _logger->debug("Got {} bytes from socket", readed_bytes);
 
             while (readed_bytes > 0) {
-//                 _logger->debug("Process {} bytes", readed_bytes);
+                //                 _logger->debug("Process {} bytes", readed_bytes);
                 // There is no command yet
                 if (!command_to_execute) {
                     std::size_t parsed = 0;
                     if (parser.Parse(client_buffer, readed_bytes, parsed)) {
-//                         _logger->debug("Found new command: {} in {} bytes", parser.Name(), parsed);
+                        //                         _logger->debug("Found new command: {} in {} bytes", parser.Name(),
+                        //                         parsed);
                         command_to_execute = parser.Build(arg_remains);
                         if (arg_remains > 0) {
                             arg_remains += 2;
@@ -69,7 +71,7 @@ void Connection::DoRead() {
                 }
 
                 if (command_to_execute && arg_remains > 0) {
-//                     _logger->debug("Fill argument: {} bytes of {}", readed_bytes, arg_remains);
+                    //                     _logger->debug("Fill argument: {} bytes of {}", readed_bytes, arg_remains);
                     std::size_t to_read = std::min(arg_remains, std::size_t(readed_bytes));
                     argument_for_command.append(client_buffer, to_read);
 
@@ -80,7 +82,7 @@ void Connection::DoRead() {
 
                 // Thre is command & argument - RUN!
                 if (command_to_execute && arg_remains == 0) {
-//                     _logger->debug("Start command execution");
+                    //                     _logger->debug("Start command execution");
 
                     std::string result;
                     command_to_execute->Execute(*_ps, argument_for_command, result);
@@ -98,27 +100,27 @@ void Connection::DoRead() {
             } // while (readed_bytes)
         }
         if (readed_bytes == 0) {
-//             _logger->debug("Connection closed");
+            //             _logger->debug("Connection closed");
         } else {
             throw std::runtime_error(std::string(strerror(errno)));
         }
     } catch (std::runtime_error &ex) {
-//         _logger->error("Failed to process connection on descriptor {}: {}", client_socket, ex.what());
+        //         _logger->error("Failed to process connection on descriptor {}: {}", client_socket, ex.what());
     }
 }
 
 // See Connection.h
 void Connection::DoWrite() {
-    //TODO: мб тут и вообще не надо на всё действие мьютекс хватать?
+    // TODO: мб тут и вообще не надо на всё действие мьютекс хватать?
     // с другой стороны, почему бы и нет?))))
     std::lock_guard<std::mutex> lg{_m_state};
     int response_amnt = _responses.size();
-    //TODO: ssize_t и в остальных местах тоже?
+    // TODO: ssize_t и в остальных местах тоже?
     int now_written = -1;
-    //TODO: в динамическую память?
+    // TODO: в динамическую память?
     struct iovec iov[response_amnt];
     for (int i = 0; i < response_amnt; ++i) {
-        iov[i].iov_base = const_cast<char*>(_responses[i].c_str());
+        iov[i].iov_base = const_cast<char *>(_responses[i].c_str());
         iov[i].iov_len = _responses[i].size();
     }
     iov[0].iov_base = static_cast<char *>(iov[0].iov_base) + _bytes_written;
@@ -128,7 +130,7 @@ void Connection::DoWrite() {
 
     // разбудили, т.к. можно писать. если запись упала - это не EAGAIN, а что-то другое, выход
     if (now_written == -1) {
-        OnClose(); //TODO: или OnError? Хотя они одинаковые
+        OnClose(); // TODO: или OnError? Хотя они одинаковые
         return;
     }
 

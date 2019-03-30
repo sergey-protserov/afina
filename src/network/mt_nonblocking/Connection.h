@@ -1,14 +1,14 @@
 #ifndef AFINA_NETWORK_MT_NONBLOCKING_CONNECTION_H
 #define AFINA_NETWORK_MT_NONBLOCKING_CONNECTION_H
 
+#include <afina/execute/Command.h>
 #include <cstring>
 #include <mutex>
-#include <sys/epoll.h>
 #include <protocol/Parser.h>
-#include <unistd.h>
-#include <afina/execute/Command.h>
-#include <sys/uio.h>
+#include <sys/epoll.h>
 #include <sys/socket.h>
+#include <sys/uio.h>
+#include <unistd.h>
 
 namespace Afina {
 namespace Network {

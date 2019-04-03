@@ -93,7 +93,7 @@ private:
     bool RefreshImp(lru_node &torefresh_ref);
 
     // Remove LRU-nodes until we get as much as needfree free space
-    bool GetFreeImpl(size_t needfree);
+    bool GetFreeImpl(ssize_t needfree);
 
     // Put a new element w/o checking for it's existence (this check MUST be performed before calling this method)
     bool PutImpl(const std::string &key, const std::string &value);

@@ -113,7 +113,7 @@ bool SimpleLRU::RefreshImp(lru_node &torefresh_ref) {
 }
 
 // Remove LRU-nodes until we get as much as needfree free space
-bool SimpleLRU::GetFreeImpl(size_t needfree) {
+bool SimpleLRU::GetFreeImpl(ssize_t needfree) {
     if (needfree > _max_size) {
         return false;
     }
@@ -125,7 +125,7 @@ bool SimpleLRU::GetFreeImpl(size_t needfree) {
 
 // Put a new element w/o checking for it's existence (this check MUST be performed before calling this method)
 bool SimpleLRU::PutImpl(const std::string &key, const std::string &value) {
-    size_t addsize = key.size() + value.size();
+    ssize_t addsize = key.size() + value.size();
     if (!GetFreeImpl(addsize)) {
         return false;
     }
@@ -151,13 +151,16 @@ bool SimpleLRU::SetImpl(std::map<std::reference_wrapper<const std::string>, std:
                                  std::less<std::string>>::iterator toset_it,
                         const std::string &value) {
     lru_node &toset_node = toset_it->second;
-    size_t sizedelta = value.size() - toset_node.value.size();
+    ssize_t sizedelta = value.size() - toset_node.value.size();
     // if (_cur_size + sizedelta > _max_size) {
     //     return false;
     // }
-    if (!GetFreeImpl(sizedelta)) {
-        return false;
+    if (sizedelta > 0) {
+        if (!GetFreeImpl(sizedelta)) {
+            return false;
+        }
     }
+
     toset_node.value = value;
     _cur_size += sizedelta;
     return RefreshImp(toset_node);

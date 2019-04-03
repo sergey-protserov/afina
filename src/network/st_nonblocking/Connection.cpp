@@ -7,13 +7,11 @@ namespace Network {
 namespace STnonblock {
 
 bool Connection::isAlive() {
-    std::lock_guard<std::mutex> lg{_m_state};
     return _alive;
 }
 
 // See Connection.h
 void Connection::Start() {
-    std::lock_guard<std::mutex> lg{_m_state};
     _event.data.ptr = this;
     _event.events = EVENT_READ;
     _alive = true;
@@ -28,14 +26,12 @@ void Connection::Start() {
 
 // See Connection.h
 void Connection::OnError() {
-    std::lock_guard<std::mutex> lg{_m_state};
     _alive = false;
     shutdown(_socket, SHUT_RDWR);
 }
 
 // See Connection.h
 void Connection::OnClose() {
-    std::lock_guard<std::mutex> lg{_m_state};
     _alive = false;
     shutdown(_socket, SHUT_RDWR);
 }
@@ -43,7 +39,6 @@ void Connection::OnClose() {
 // See Connection.h
 void Connection::DoRead() {
     command_to_execute = nullptr;
-    std::lock_guard<std::mutex> lg{_m_state};
     try {
         int bytes_read_now = -1;
         while ((bytes_read_now = read(_socket, client_buffer + readed_bytes, sizeof(client_buffer) - readed_bytes)) >
@@ -112,9 +107,6 @@ void Connection::DoRead() {
 
 // See Connection.h
 void Connection::DoWrite() {
-    // TODO: мб тут и вообще не надо на всё действие мьютекс хватать?
-    // с другой стороны, почему бы и нет?))))
-    std::lock_guard<std::mutex> lg{_m_state};
     int response_amnt = _responses.size();
     if (response_amnt <= 0) {
         return;

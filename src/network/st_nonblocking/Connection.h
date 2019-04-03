@@ -4,7 +4,6 @@
 #include <cstring>
 
 #include <sys/epoll.h>
-#include <mutex>
 #include <protocol/Parser.h>
 #include <afina/Storage.h>
 #include <afina/execute/Command.h>
@@ -40,7 +39,6 @@ private:
     int _socket;
     struct epoll_event _event;
     bool _alive;
-    std::mutex _m_state;
 
     // from mt_blocking import *
     std::size_t arg_remains;

@@ -2,7 +2,7 @@
 use 5.016;
 use warnings;
 use threads;
-use Test::More tests => 85;
+use Test::More tests => 55;
 use IO::Socket::INET;
 use Getopt::Long;
 
@@ -145,55 +145,55 @@ afina_test(
 	0
 );
 
-TODO: {
-	local $TODO = "Replace command isn't yet implemented in the parser";
+# TODO: {
+# 	local $TODO = "Replace command isn't yet implemented in the parser";
+# 
+# 	afina_test(
+# 		"replace test_ 0 0 3\r\nwtf\r\n",
+# 		"NOT_STORED\r\n",
+# 		"Don't replace non-existent key",
+# 		1
+# 	);
+# 
+# 	afina_test(
+# 		"replace test 0 0 3\r\nzzz\r\n",
+# 		"STORED\r\n",
+# 		"Replace an existent key",
+# 		1
+# 	);
+# 
+# 	afina_test(
+# 		"get test\r\n",
+# 		"VALUE test 0 3\r\nzzz\r\nEND\r\n",
+# 		"Verify replace",
+# 		0
+# 	);
+# }
 
-	afina_test(
-		"replace test_ 0 0 3\r\nwtf\r\n",
-		"NOT_STORED\r\n",
-		"Don't replace non-existent key",
-		1
-	);
+# TODO: {
+# 	local $TODO = "Delete command isn't yet implemented";
+# 
+# 	afina_test(
+# 		"delete test\r\n",
+# 		"DELETED\r\n",
+# 		"Delete a key",
+# 		1
+# 	);
+# }
 
-	afina_test(
-		"replace test 0 0 3\r\nzzz\r\n",
-		"STORED\r\n",
-		"Replace an existent key",
-		1
-	);
-
-	afina_test(
-		"get test\r\n",
-		"VALUE test 0 3\r\nzzz\r\nEND\r\n",
-		"Verify replace",
-		0
-	);
-}
-
-TODO: {
-	local $TODO = "Delete command isn't yet implemented";
-
-	afina_test(
-		"delete test\r\n",
-		"DELETED\r\n",
-		"Delete a key",
-		1
-	);
-}
-
-afina_test(
-	"blablabla 0 0 0\r\n",
-	qr/ERROR/,
-	"Must report unknown command error to user",
-	1
-);
-
-afina_test(
-	"get var\r\r",
-	qr/ERROR/,
-	"Must report desync errors to user",
-	1
-);
+# afina_test(
+# 	"blablabla 0 0 0\r\n",
+# 	qr/ERROR/,
+# 	"Must report unknown command error to user",
+# 	1
+# );
+# 
+# afina_test(
+# 	"get var\r\r",
+# 	qr/ERROR/,
+# 	"Must report desync errors to user",
+# 	1
+# );
 
 afina_test(
 	sub {

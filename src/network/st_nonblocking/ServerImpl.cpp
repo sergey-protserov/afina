@@ -148,8 +148,12 @@ void ServerImpl::OnRun() {
 
             auto old_mask = pc->_event.events;
             if ((current_event.events & EPOLLERR) || (current_event.events & EPOLLHUP)) {
+                pc->DoRead();
+                pc->DoWrite();
                 pc->OnError();
             } else if (current_event.events & EPOLLRDHUP) {
+                pc->DoRead();
+                pc->DoWrite();
                 pc->OnClose();
             } else {
                 // Depends on what connection wants...
@@ -212,7 +216,7 @@ void ServerImpl::OnNewConnection(int epoll_descr) {
         }
 
         // Register the new FD to be monitored by epoll.
-        Connection *pc = new Connection(infd);
+        Connection *pc = new Connection(infd, pStorage);
         if (pc == nullptr) {
             throw std::runtime_error("Failed to allocate connection");
         }

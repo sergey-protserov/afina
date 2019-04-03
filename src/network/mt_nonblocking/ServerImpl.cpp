@@ -209,7 +209,8 @@ void ServerImpl::OnRun() {
                     pc->_event.events |= EPOLLONESHOT;
                     int epoll_ctl_retval;
                     if ((epoll_ctl_retval = epoll_ctl(_data_epoll_fd, EPOLL_CTL_ADD, pc->_socket, &pc->_event))) {
-                        _logger->debug("epoll_ctl failed during connection register in workers'epoll: error {}", epoll_ctl_retval);
+                        _logger->debug("epoll_ctl failed during connection register in workers'epoll: error {}",
+                                       epoll_ctl_retval);
                         pc->OnError();
                         delete pc;
                     }

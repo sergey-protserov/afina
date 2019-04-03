@@ -93,10 +93,17 @@ void Worker::OnRun() {
             // Some connection gets new data
             Connection *pconn = static_cast<Connection *>(current_event.data.ptr);
             if ((current_event.events & EPOLLERR) || (current_event.events & EPOLLHUP)) {
+                // TOASK: в любой непонятной ситуации Read + Write - соответствует моим представлениям о корректном
+                // завершении работы и нормально показывает себя в тестах, но правильно ли это?
                 _logger->debug("Got EPOLLERR or EPOLLHUP, value of returned events: {}", current_event.events);
+                pconn->DoRead();
+                pconn->DoWrite();
                 pconn->OnError();
+                // TOASK: верно ли, что тут порядок проверки битов (HUP, RDHUP) важен?
             } else if (current_event.events & EPOLLRDHUP) {
                 _logger->debug("Got EPOLLRDHUP, value of returned events: {}", current_event.events);
+                pconn->DoRead();
+                pconn->DoWrite();
                 pconn->OnClose();
             } else {
                 // Depends on what connection wants...

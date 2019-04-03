@@ -1,9 +1,5 @@
-// TODO: закрытие сокета, его нигде нет!)
-// TODO: защита мьютекстом storage'а?
 // TODO: _m_state сам нуждается в защите мьютексом?))
 #include "Connection.h"
-
-#include <iostream>
 
 namespace Afina {
 namespace Network {
@@ -20,8 +16,13 @@ void Connection::Start() {
     _event.data.ptr = this;
     _event.events = EVENT_READ;
     _alive = true;
-    readed_bytes = -1;
+    readed_bytes = 0;
     _bytes_written = 0;
+    arg_remains = 0;
+    command_to_execute = nullptr;
+    parser = Protocol::Parser{};
+    argument_for_command.clear();
+    _responses.clear();
 }
 
 // See Connection.h
@@ -40,6 +41,7 @@ void Connection::OnClose() {
 
 // See Connection.h
 void Connection::DoRead() {
+    command_to_execute = nullptr;
     std::lock_guard<std::mutex> lg{_m_state};
     try {
         int bytes_read_now = -1;
@@ -47,7 +49,6 @@ void Connection::DoRead() {
                0) {
             readed_bytes += bytes_read_now;
             //             _logger->debug("Got {} bytes from socket", readed_bytes);
-
             while (readed_bytes > 0) {
                 //                 _logger->debug("Process {} bytes", readed_bytes);
                 // There is no command yet
@@ -83,7 +84,6 @@ void Connection::DoRead() {
                 // Thre is command & argument - RUN!
                 if (command_to_execute && arg_remains == 0) {
                     //                     _logger->debug("Start command execution");
-
                     std::string result;
                     command_to_execute->Execute(*_ps, argument_for_command, result);
                     // Send response
@@ -115,6 +115,9 @@ void Connection::DoWrite() {
     // с другой стороны, почему бы и нет?))))
     std::lock_guard<std::mutex> lg{_m_state};
     int response_amnt = _responses.size();
+    if (response_amnt <= 0) {
+        return;
+    }
     // TODO: ssize_t и в остальных местах тоже?
     int now_written = -1;
     // TODO: в динамическую память?
@@ -137,8 +140,8 @@ void Connection::DoWrite() {
     _bytes_written += now_written;
     int responses_written = 0;
     while ((responses_written < response_amnt) && (_bytes_written >= iov[responses_written].iov_len)) {
-        responses_written++;
         _bytes_written -= iov[responses_written].iov_len;
+        responses_written++;
     }
     _responses.erase(_responses.begin(), _responses.begin() + responses_written);
     if (_responses.empty()) {

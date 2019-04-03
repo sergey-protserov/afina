@@ -34,7 +34,6 @@ protected:
 private:
     static constexpr int EVENT_READ = EPOLLIN | EPOLLRDHUP | EPOLLERR | EPOLLHUP | EPOLLET | EPOLLONESHOT;
     static constexpr int EVENT_WRITE = EPOLLOUT | EPOLLRDHUP | EPOLLERR | EPOLLHUP | EPOLLET | EPOLLONESHOT;
-    // когда ставить оба R и W? По идее, нужно либо R, либо RW. Обдумать эту идею.
     friend class Worker;
     friend class ServerImpl;
 

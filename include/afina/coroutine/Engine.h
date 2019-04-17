@@ -2,6 +2,7 @@
 #define AFINA_COROUTINE_ENGINE_H
 
 #include <cstdint>
+#include <cstring>
 #include <iostream>
 #include <map>
 #include <setjmp.h>
@@ -26,7 +27,7 @@ private:
         char *Low = nullptr;
 
         // coroutine stack end address
-        char *Hight = nullptr;
+        char *High = nullptr;
 
         // coroutine stack copy buffer
         std::tuple<char *, uint32_t> Stack = std::make_tuple(nullptr, 0);
@@ -55,6 +56,11 @@ private:
     context *alive;
 
     /**
+     * List of routines that are blocked on IO
+     */
+    context *blocked;
+
+    /**
      * Context to be returned finally
      */
     context *idle_ctx;
@@ -73,10 +79,10 @@ protected:
     /**
      * Suspend current coroutine execution and execute given context
      */
-    // void Enter(context& ctx);
+    void Enter(context &ctx);
 
 public:
-    Engine() : StackBottom(0), cur_routine(nullptr), alive(nullptr) {}
+    Engine() : StackBottom(0), cur_routine(nullptr), alive(nullptr), blocked(nullptr), idle_ctx(nullptr) {}
     Engine(Engine &&) = delete;
     Engine(const Engine &) = delete;
 
@@ -111,7 +117,12 @@ public:
      */
     template <typename... Ta> void start(void (*main)(Ta...), Ta &&... args) {
         // To acquire stack begin, create variable on stack and remember its address
-        char StackStartsHere;
+        char StackStartsHere; // TOASK: а нормально, что после него ещё идут pc, idle_ctx и т.д.?
+        // Разве все эти переменные не должны быть в начале фрейма start, чтобы после StackBottom больше ничего
+        // не было?
+        // ОТВЕТ: idle_ctx - поле класса, лежит в области по указателю this, а он заведомо выше по стеку.
+        // pc сразу передаётся в sched как копия
+        // можем запросто перезаписать, не страшно. Обдумать и уточнить.
         this->StackBottom = &StackStartsHere;
 
         // Start routine execution
@@ -127,8 +138,8 @@ public:
         }
 
         // Shutdown runtime
-        delete idle_ctx;
-        this->StackBottom = 0;
+        delete idle_ctx;       // не, а вот этот указатель мы не сломаем?
+        this->StackBottom = 0; // TOASK: зачем?
     }
 
     /**

@@ -31,7 +31,7 @@ namespace MTnonblock {
 
 // See Server.h
 ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl, bool local)
-    : Server(ps, pl, local) {}
+    : Server(ps, pl, local) {} // TOASK: в таком случае для _engine будет вызван конструктор по умолчанию?
 
 // See Server.h
 ServerImpl::~ServerImpl() {}

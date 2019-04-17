@@ -11,7 +11,10 @@ set(SOURCE_FILES
     mt_nonblocking/Connection.cpp
     mt_nonblocking/Worker.cpp
     mt_nonblocking/Utils.cpp
+
+    coroutine/ServerImpl.cpp
+    coroutine/Utils.cpp
 )
 
 add_library(Network ${SOURCE_FILES})
-target_link_libraries(Network pthread Logging Protocol Execute Concurrency ${CMAKE_THREAD_LIBS_INIT})
+target_link_libraries(Network pthread Logging Protocol Execute Concurrency Coroutine ${CMAKE_THREAD_LIBS_INIT})

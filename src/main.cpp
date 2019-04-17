@@ -15,6 +15,7 @@
 #include <afina/network/Server.h>
 
 #include "logging/ServiceImpl.h"
+#include "network/coroutine/ServerImpl.h"
 #include "network/mt_blocking/ServerImpl.h"
 #include "network/mt_nonblocking/ServerImpl.h"
 #include "network/st_blocking/ServerImpl.h"
@@ -76,6 +77,8 @@ public:
             server = std::make_shared<Afina::Network::STnonblock::ServerImpl>(storage, logService, local);
         } else if (network_type == "mt_nonblock") {
             server = std::make_shared<Afina::Network::MTnonblock::ServerImpl>(storage, logService, local);
+        } else if (network_type == "coroutine") {
+            server = std::make_shared<Afina::Network::Coroutine::ServerImpl>(storage, logService, local);
         } else {
             throw std::runtime_error("Unknown network type");
         }

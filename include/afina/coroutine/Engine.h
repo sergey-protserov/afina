@@ -3,6 +3,7 @@
 
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <setjmp.h>
@@ -16,12 +17,12 @@ namespace Coroutine {
  * Allows to run coroutine and schedule its execution. Not threadsafe
  */
 class Engine final {
-private:
+public:
+    struct context;
     /**
      * A single coroutine instance which could be scheduled for execution
      * should be allocated on heap
      */
-    struct context;
     typedef struct context {
         // coroutine stack start address
         char *Low = nullptr;
@@ -30,7 +31,7 @@ private:
         char *High = nullptr;
 
         // coroutine stack copy buffer
-        std::tuple<char *, uint32_t> Stack = std::make_tuple(nullptr, 0);
+        std::tuple<char *, size_t> Stack = std::make_tuple(nullptr, 0);
 
         // Saved coroutine context (registers)
         jmp_buf Environment;
@@ -38,12 +39,25 @@ private:
         // To include routine in the different lists, such as "alive", "blocked", e.t.c
         struct context *prev = nullptr;
         struct context *next = nullptr;
+
+        // Whether this coroutine is blocked
+        // Required, for example, to handle the following situation:
+        // yield() called. If no good candidates, can we return to the
+        // calling routine, or idle action should be performed instead?
+        bool blocked = false;
     } context;
 
     /**
      * Where coroutines stack begins
      */
+    // TOASK TODO ALARM ATTENTION!!!!!
+    // Я переместил этот атрибут ниже по тексту в определении класса, и он стал зануляться при вызове Store из Run!!!
+    // O_O!!!!
+    // ЧТО ЭТО ПОЧЕМУ ЭТО АААААААА??
     char *StackBottom;
+
+private:
+    std::function<void()> idle_func;
 
     /**const int&
      * Current coroutine
@@ -56,7 +70,7 @@ private:
     context *alive;
 
     /**
-     * List of routines that are blocked on IO
+     * List of routines that are blocked (on IO)
      */
     context *blocked;
 
@@ -81,10 +95,40 @@ protected:
      */
     void Enter(context &ctx);
 
+    /**
+     * Move coroutine from one list to another
+     * This function assumes, that routine is in fromlist and not in tolist (not sure about the latter)
+     */
+    void MoveCoroutine(context *&fromlist, context *&tolist,
+                       context *routine); // константность routine? ссылка routine?
+
 public:
-    Engine() : StackBottom(0), cur_routine(nullptr), alive(nullptr), blocked(nullptr), idle_ctx(nullptr) {}
+    Engine(std::function<void()> _idle_func)
+        : StackBottom(0), idle_func(_idle_func), cur_routine(nullptr), alive(nullptr), blocked(nullptr),
+          idle_ctx(nullptr) {}
+    Engine() = delete;
     Engine(Engine &&) = delete;
     Engine(const Engine &) = delete;
+
+    /**
+     * Check if we must wait for something before
+     * engine can continue processing it's coroutines.
+     * It effectively means, that all the coroutines are
+     * blocked
+     * TODO: Returns true, if: no alive coroutines, but exist blocked coroutines
+     * TODO: returns false if there are no alive and no blocked coroutines
+     * In fact, this is the situation, when the engine has stopped
+     * But should I check it more carefully?
+     */
+    bool is_all_blocked() const;
+
+    /**
+     * Get current coroutine pointer
+     * It is used when waiting in epoll: once we finished
+     * waiting, we get this pointer back to wake the corresponding
+     * routine
+     */
+    context *get_cur_routine() const;
 
     /**
      * Gives up current routine execution and let engine to schedule other one. It is not defined when
@@ -106,16 +150,32 @@ public:
     void sched(void *routine);
 
     /**
+     * Block current coroutine
+     * In fact, move it to "blocked" list, mark as blocked
+     * and reset it's "events" bits. Just in case.
+     */
+    void Block();
+
+    /**
+     * Wake given coroutine (move from blocked to alive),
+     * mark as not blocked
+     */
+    void Wake(context *ctx);
+
+    /**
+     * Wake all the coroutines in blocked
+     * Required when the server is going to stop.
+     */
+    void WakeAll(void);
+
+    /**
      * Entry point into the engine. Prepare all internal mechanics and starts given function which is
      * considered as main.
      *
      * Once control returns back to caller of start all coroutines are done execution, in other words,
      * this function doesn't return control until all coroutines are done.
-     *
-     * @param pointer to the main coroutine
-     * @param arguments to be passed to the main coroutine
      */
-    template <typename... Ta> void start(void (*main)(Ta...), Ta &&... args) {
+    void start(std::function<void()> main) {
         // To acquire stack begin, create variable on stack and remember its address
         char StackStartsHere; // TOASK: а нормально, что после него ещё идут pc, idle_ctx и т.д.?
         // Разве все эти переменные не должны быть в начале фрейма start, чтобы после StackBottom больше ничего
@@ -126,7 +186,7 @@ public:
         this->StackBottom = &StackStartsHere;
 
         // Start routine execution
-        void *pc = run(main, std::forward<Ta>(args)...);
+        void *pc = run(main);
         idle_ctx = new context();
 
         if (setjmp(idle_ctx->Environment) > 0) {
@@ -137,7 +197,14 @@ public:
             sched(pc);
         }
 
+        // TODO: idle_func должен ТОЛЬКО будить корутины, тогда его можно разместить после
+        // yield в if setjmp:
+        // Но тогда ещё нужен цикл. Если после idle_func не появилось живых корутин - выходим и
+        // уничтожаем всё (см ниже)
+        idle_func();
+
         // Shutdown runtime
+        delete std::get<0>(idle_ctx->Stack);
         delete idle_ctx;       // не, а вот этот указатель мы не сломаем?
         this->StackBottom = 0; // TOASK: зачем?
     }
@@ -146,7 +213,7 @@ public:
      * Register new coroutine. It won't receive control until scheduled explicitely or implicitly. In case of some
      * errors function returns -1
      */
-    template <typename... Ta> void *run(void (*func)(Ta...), Ta &&... args) {
+    void *run(std::function<void()> func) {
         if (this->StackBottom == 0) {
             // Engine wasn't initialized yet
             return nullptr;
@@ -163,7 +230,8 @@ public:
             // context pointer, arguments and a pointer to the function comes from restored stack
 
             // invoke routine
-            func(std::forward<Ta>(args)...);
+            // TODO: обработка ошибок - try catch, вот это вот всё?
+            func();
 
             // Routine has completed its execution, time to delete it. Note that we should be extremely careful in where
             // to pass control after that. We never want to go backward by stack as that would mean to go backward in
@@ -184,7 +252,9 @@ public:
             // current coroutine finished, and the pointer is not relevant now
             cur_routine = nullptr;
             pc->prev = pc->next = nullptr;
-            delete std::get<0>(pc->Stack);
+            if (std::get<0>(pc->Stack) != nullptr) {
+                delete std::get<0>(pc->Stack);
+            }
             delete pc;
 
             // We cannot return here, as this function "returned" once already, so here we must select some other
@@ -200,6 +270,7 @@ public:
 
         // Add routine as alive double-linked list
         pc->next = alive;
+        pc->blocked = false; // TODO: спросить - нужна ли эта инициализация, или оно само из определения структуры?
         alive = pc;
         if (pc->next != nullptr) {
             pc->next->prev = pc;

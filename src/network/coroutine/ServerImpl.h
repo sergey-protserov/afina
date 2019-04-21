@@ -1,18 +1,35 @@
 #ifndef AFINA_NETWORK_COROUTINE_SERVER_H
 #define AFINA_NETWORK_COROUTINE_SERVER_H
 
-#include <afina/coroutine/Engine_Epoll.h>
+#include <arpa/inet.h>
+#include <netdb.h>
+#include <netinet/in.h>
+#include <signal.h>
+#include <string.h>
+#include <sys/epoll.h>
+#include <sys/eventfd.h>
+#include <sys/socket.h>
+#include <sys/types.h>
+#include <unistd.h>
+
+#include <cassert>
+#include <cstring>
+#include <functional>
+#include <iostream>
+#include <mutex>
+#include <stdexcept>
+#include <thread>
+
+#include <afina/Storage.h>
+#include <afina/logging/Service.h>
+#include <spdlog/logger.h>
+
+#include "Connection.h"
+#include "Utils.h"
+#include <afina/coroutine/Engine.h>
 #include <afina/execute/Command.h>
 #include <afina/network/Server.h>
 #include <protocol/Parser.h>
-#include <sys/epoll.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <thread>
-#include <unistd.h>
-#include <vector>
-
-#include <iostream>
 
 namespace spdlog {
 class logger;
@@ -55,21 +72,15 @@ private:
     // Coroutine engine
     Afina::Coroutine::Engine _engine;
 
-    // Port to listen for new connections, permits access only from
-    // inside of accept_thread
-    // Read-only
-    uint16_t listen_port;
-
-    // Socket to accept new connection on, shared between acceptors
-    int _server_socket;
-
     // Network thread
     std::thread _thread;
 
-    // Coroutine-aware variants of standard functions
-    ssize_t _read(int fd, void *buf, size_t count);
-    ssize_t _write(int fd, const void *buf, size_t count);
-    int _accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen);
+    std::mutex _m;
+    // List of connections
+    Connection *conns;
+
+    // Socket to accept new connection on, shared between acceptors
+    int _server_socket;
 
     // EPOLL instance shared between workers
     int _data_epoll_fd;
@@ -79,6 +90,12 @@ private:
 
     // Whether network is running
     bool _running = false;
+
+private:
+    // Coroutine-aware variants of standard functions
+    ssize_t _read(int fd, void *buf, size_t count, Connection *conn);
+    ssize_t _write(int fd, const void *buf, size_t count, Connection *conn);
+    int _accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen, Connection *conn);
 
     // Idle func for coroutine engine
     // I will get here each time there
@@ -90,12 +107,14 @@ private:
     // epoll_wait will be called by _idle_func when the time
     // is right (that is, there is no coroutine to be
     // executed)
-    void _block_on_epoll(int fd, uint32_t events);
+    void _block_on_epoll(int fd, uint32_t events, Connection *conn);
 
     // Function to handle client connection
     // It will be run as coroutine for each new
     // connection
-    void Connection(int client_socket);
+    void Worker(int client_socket);
+
+    void del_conn_from_list(Connection *cur_conn);
 };
 
 } // namespace Coroutine

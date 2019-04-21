@@ -1,35 +1,12 @@
 #include "ServerImpl.h"
 
-#include <cassert>
-#include <cstring>
-#include <iostream>
-#include <memory>
-#include <stdexcept>
-
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <signal.h>
-#include <sys/epoll.h>
-#include <sys/eventfd.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-
-#include <spdlog/logger.h>
-
-#include <afina/Storage.h>
-#include <afina/logging/Service.h>
-
-#include "Utils.h"
-
 namespace Afina {
 namespace Network {
 namespace Coroutine {
 
 // See Server.h
 ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl, bool local)
-    : Server(ps, pl, local) {}
+    : Server(ps, pl, local), _engine(std::bind(&ServerImpl::_idle_func, this)) {}
 
 // See Server.h
 ServerImpl::~ServerImpl() {}
@@ -90,25 +67,32 @@ void ServerImpl::Start(uint16_t port, uint32_t n_acceptors, uint32_t n_workers) 
         throw std::runtime_error("Failed to create epoll file descriptor: " + std::string(strerror(errno)));
     }
 
+    _m.lock();
+    conns = nullptr;
+    _m.unlock();
+
     struct epoll_event event;
+    memset(&event, 0, sizeof(event));
     event.events = EPOLLIN;
-    event.data.ptr = nullptr;
+    event.data.ptr = this;
     if (epoll_ctl(_data_epoll_fd, EPOLL_CTL_ADD, _event_fd, &event)) {
         throw std::runtime_error("Failed to add eventfd descriptor to epoll");
     }
 
     _running = true;
-    // TODO: ок или не ок?
-    // Я хочу запустить в отдельном треде функцию _engine.start(), которая
-    // запустит движок и дальше будет управлять корутинами. Не знаю, как сделать лучше,
-    // чем следующим образом:
-    _thread = std::thread([this] { this->_engine.start([this] { this->_idle_func(); }, [this] { this->OnRun(); }); });
+    _thread = std::thread([this] { this->_engine.start(std::bind(&ServerImpl::OnRun, this)); });
 }
 
 // See Server.h
 void ServerImpl::Stop() {
     _logger->warn("Stop network service");
     _running = false;
+
+    _m.lock();
+    for (auto connptr = conns; connptr != nullptr; connptr = connptr->next) {
+        connptr->running = false;
+    }
+    _m.unlock();
 
     // Wakeup threads that are sleep on epoll_wait
     if (eventfd_write(_event_fd, 1)) {
@@ -126,11 +110,19 @@ void ServerImpl::Join() {
 
 // See ServerImpl.h
 void ServerImpl::OnRun() {
+    auto cur_rout = _engine.get_cur_routine();
+    auto newconn = new Connection;
+    newconn->events = 0;
+    newconn->running = true;
+    newconn->ctx = cur_rout;
+    _m.lock();
+    conns = newconn;
+    _m.unlock();
     while (_running) {
         struct sockaddr in_addr;
         socklen_t in_len;
         in_len = sizeof(in_addr);
-        int infd = _accept(_server_socket, &in_addr, &in_len);
+        int infd = _accept(_server_socket, &in_addr, &in_len, newconn);
         if (infd == -1) {
             continue;
         }
@@ -143,19 +135,31 @@ void ServerImpl::OnRun() {
             _logger->info("Accepted connection on descriptor {} (host={}, port={})\n", infd, hbuf, sbuf);
         }
 
-        _engine.run([this, infd]() { this->Connection(infd); });
+        _engine.run([this, infd]() { this->Worker(infd); });
     }
+    del_conn_from_list(newconn);
 }
 
-void ServerImpl::Connection(int client_socket) {
+void ServerImpl::Worker(int client_socket) {
     std::size_t arg_remains;
     Protocol::Parser parser;
     std::string argument_for_command;
     std::unique_ptr<Execute::Command> command_to_execute;
+    auto conn = new Connection;
+    conn->events = 0;
+    conn->running = true;
+    conn->ctx = _engine.get_cur_routine();
+    _m.lock();
+    conn->next = conns;
+    conns = conn;
+    if (conn->next != nullptr) {
+        conn->next->prev = conn;
+    }
+    _m.unlock();
     try {
         int readed_bytes = -1;
         char client_buffer[4096];
-        while (_running && (readed_bytes = _read(client_socket, client_buffer, sizeof(client_buffer))) > 0) {
+        while (_running && (readed_bytes = _read(client_socket, client_buffer, sizeof(client_buffer), conn)) > 0) {
             _logger->debug("Got {} bytes from socket", readed_bytes);
 
             // Single block of data readed from the socket could trigger inside actions a multiple times,
@@ -198,7 +202,6 @@ void ServerImpl::Connection(int client_socket) {
                     arg_remains -= to_read;
                     readed_bytes -= to_read;
                 }
-
                 // Thre is command & argument - RUN!
                 if (command_to_execute && arg_remains == 0) {
                     _logger->debug("Start command execution");
@@ -207,7 +210,7 @@ void ServerImpl::Connection(int client_socket) {
                     command_to_execute->Execute(*pStorage, argument_for_command, result);
                     // Send response
                     result += "\r\n";
-                    if (_write(client_socket, result.data(), result.size()) == -1) {
+                    if (_write(client_socket, result.data(), result.size(), conn) == -1) {
                         break; // TODO: точно? Если мне из epoll пришла ошибка, то стоит ли продолжать общаться с этим
                                // сокетом? Мб вообще выход?
                     }
@@ -227,59 +230,82 @@ void ServerImpl::Connection(int client_socket) {
     } catch (std::runtime_error &ex) {
         _logger->error("Failed to process connection on descriptor {}: {}", client_socket, ex.what());
     }
+    del_conn_from_list(conn);
     close(client_socket);
 }
 
 void ServerImpl::_idle_func() {
     const int maxevents = 64; // MAGIC NUMBER
-    struct epoll_event *events = new struct epoll_event[maxevents];
+    // unique_ptr до какого-то стандарта для массива всё равно вызывает delete
+    // без квадратных скобок, это ошибка.
+    struct epoll_event events[maxevents]; // TOASK: какого размера объекты можно размещать на стеке?
+    memset(events, 0, sizeof(events[0]) * maxevents);
     int n_events = -1;
     // TOASK: На cppreference написано, что std::array удовлетворяет
     // требованиям contiguous container'а с C++17. Получается, если я хочу
     // передавать _адрес_ области памяти со структурами, std::array для
     // этого не годится? TODO
-    while (_engine.allblocked()) { // TODO: не уверен, что этот цикл вообще нужен. Но, наверное, не помешает.
+    // Фактически, std::array вроде бы continuous, но я всё-таки перестрахуюсь.
+    while (_engine.is_all_blocked()) {
+
         n_events = epoll_wait(_data_epoll_fd, events, maxevents, -1);
+
         if (n_events == -1) {
-            delete[] events; // TODO: правильно?
             throw std::runtime_error("Error while calling epoll_wait in _idle_func");
         }
         for (int i = 0; i < n_events; ++i) {
             // auto ready_routine = static_cast<Coroutine::Engine::context*>(events[i].data.ptr);
             // Could have just set all the necessary fields (in fact, only events), but context
             // is private in Engine, so will use special setter instead
-            if (events[i].data.ptr ==
-                nullptr) {         // special value, which means a signal from event_fd, server is stopping
-                _engine.WakeAll(); // all the coroutines should wake up and get ready to stop
+            // вместо nullptr я должен какое-то другое значение передавать
+            // почему? я ОБЯЗАН занулять структуру event_fd перед загрузкой в epoll,
+            // и если у меня nullptr означает событие от event_fd, я фактически сливаю два случая в один, хотя они
+            // разные: отсутствие инициализации и событие от event_fd
+            if (events[i].data.ptr == this) { // special value, which means a signal from event_fd, server is stopping
+                _engine.WakeAll();            // all the coroutines should wake up and get ready to stop
                 continue;
             }
-            _engine.setEventsWake(events[i].events, events[i].data.ptr);
+            auto cur_conn = static_cast<Connection *>(events[i].data.ptr);
+            auto cur_rout = static_cast<Afina::Coroutine::Engine::context *>(cur_conn->ctx);
+            if (cur_conn == nullptr) {
+                throw std::runtime_error("1Nullptr in cur_rout->data.ptr");
+            }
+            cur_conn->events = events[i].events;
+            _engine.Wake(cur_rout);
         }
     }
     _engine.yield();
 }
 
-void ServerImpl::_block_on_epoll(int fd, uint32_t events) {
-    struct epoll_event struct_events; // TODO: maybe to dynamic memory?
+void ServerImpl::_block_on_epoll(int fd, uint32_t events, Connection *cur_conn) {
+    if (cur_conn == nullptr) {
+        throw std::runtime_error("2Nullptr in cur_rout->data.ptr");
+    }
+    struct epoll_event struct_events;
+    memset(&struct_events, 0, sizeof(struct_events));
     struct_events.events = events;
-    struct_events.data.ptr = _engine.get_cur_routine();
+    struct_events.data.ptr = cur_conn;
     if (epoll_ctl(_data_epoll_fd, EPOLL_CTL_ADD, fd, &struct_events)) {
         throw std::runtime_error("Error while calling epoll_ctl in _block_on_epoll");
     }
+    cur_conn->events = 0;
     _engine.Block();
     if (epoll_ctl(_data_epoll_fd, EPOLL_CTL_DEL, fd, &struct_events)) {
         throw std::runtime_error("Error while calling epoll_ctl in _block_on_epoll");
     }
 }
 
-ssize_t ServerImpl::_read(int fd, void *buf, size_t count) {
-    while (_running) {
+ssize_t ServerImpl::_read(int fd, void *buf, size_t count, Connection *conn) {
+    if (conn == nullptr) {
+        throw std::runtime_error("3Nullptr in cur_rout->data.ptr");
+    }
+    while (conn->running) {
         ssize_t bytes_read = read(fd, buf, count);
         if (bytes_read > 0) {
             return bytes_read;
         } else {
-            _block_on_epoll(fd, EVENT_READ);
-            uint32_t events = _engine.get_events();
+            _block_on_epoll(fd, EVENT_READ, conn);
+            uint32_t events = conn->events;
             if ((events & EPOLLRDHUP) || (events & EPOLLERR) || (events & EPOLLHUP)) {
                 return read(fd, buf, count);
             }
@@ -288,13 +314,16 @@ ssize_t ServerImpl::_read(int fd, void *buf, size_t count) {
     return -1;
 }
 
-ssize_t ServerImpl::_write(int fd, const void *buf, size_t count) {
+ssize_t ServerImpl::_write(int fd, const void *buf, size_t count, Connection *conn) {
+    if (conn == nullptr) {
+        throw std::runtime_error("4Nullptr in cur_rout->data.ptr");
+    }
     ssize_t written = 0;
-    while (_running) {
+    while (conn->running) {
         written += write(fd, static_cast<const void *>(static_cast<const char *>(buf) + written), count - written);
         if (written < count) {
-            _block_on_epoll(fd, EVENT_WRITE);
-            uint32_t events = _engine.get_events();
+            _block_on_epoll(fd, EVENT_WRITE, conn);
+            uint32_t events = conn->events;
             if ((events & EPOLLERR) || (events & EPOLLHUP)) {
                 return -1;
             }
@@ -305,18 +334,38 @@ ssize_t ServerImpl::_write(int fd, const void *buf, size_t count) {
     return -1;
 }
 
-int ServerImpl::_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen) {
-    while (_running) {
+int ServerImpl::_accept(int sockfd, struct sockaddr *addr, socklen_t *addrlen, Connection *conn) {
+    while (conn->running) {
         int fd = accept4(sockfd, addr, addrlen,
                          SOCK_NONBLOCK | SOCK_CLOEXEC); // TODO: правильно ли я понимаю, что в любой непонятной ситуации
         // следует ставить CLOEXEC?
         if (fd == -1) {
-            _block_on_epoll(sockfd, EVENT_READ); // или только IN?
+            _block_on_epoll(sockfd, EVENT_READ, conn); // или только IN?
         } else {
             return fd;
         }
     }
     return -1;
+}
+
+void ServerImpl::del_conn_from_list(Connection *cur_conn) {
+    std::lock_guard<std::mutex> lg(_m);
+    if (cur_conn == nullptr) {
+        throw std::runtime_error("5Nullptr in cur_rout->data.ptr");
+    }
+    if (cur_conn->prev != nullptr) {
+        cur_conn->prev->next = cur_conn->next;
+    }
+
+    if (cur_conn->next != nullptr) {
+        cur_conn->next->prev = cur_conn->prev;
+    }
+
+    if (conns == cur_conn) {
+        conns = cur_conn->next;
+    }
+    cur_conn->prev = cur_conn->next = nullptr;
+    delete cur_conn;
 }
 
 } // namespace Coroutine

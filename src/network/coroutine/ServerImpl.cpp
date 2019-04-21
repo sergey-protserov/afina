@@ -6,7 +6,8 @@ namespace Coroutine {
 
 // See Server.h
 ServerImpl::ServerImpl(std::shared_ptr<Afina::Storage> ps, std::shared_ptr<Logging::Service> pl, bool local)
-    : Server(ps, pl, local), _engine(std::bind(&ServerImpl::_idle_func, this)) {}
+    : Server(ps, pl, local), _engine([this] { this->_idle_func(); }) {}
+// TODO: std::bind вызывает ошибки invalid read в valgrind
 
 // See Server.h
 ServerImpl::~ServerImpl() {}
@@ -80,7 +81,8 @@ void ServerImpl::Start(uint16_t port, uint32_t n_acceptors, uint32_t n_workers) 
     }
 
     _running = true;
-    _thread = std::thread([this] { this->_engine.start(std::bind(&ServerImpl::OnRun, this)); });
+    // TODO: std::bind вызывает ошибки invalid read в valgrind
+    _thread = std::thread([this] { this->_engine.start([this] { this->OnRun(); }); });
 }
 
 // See Server.h
